@@ -2875,13 +2875,9 @@ int main()
   // vk-285-113: a broken pipe (a network peer that went away) is an error return, not the end of the app.
   signal(SIGPIPE, SIG_IGN);
   // stdout and stderr go to boot.log; when /data isn't visible yet (a console whose Helper's mount hook didn't take),
-  // into memory until it is. live-15: the pipe+pump hold is deferred to after elevation (the Lapy daemon needs a
-  // single-threaded target); until then the eboot's own early lines are kept in memory by orbis_boot_early_log.
+  // into memory until it is (orbis_boot_log_release, after the jailbreak).
   if (!orbis_boot_log_open(true))
-  {
-    g_boot_defer_hold = true;
-    g_boot_early_active = true;
-  }
+    orbis_boot_log_hold(); // back to before live-15: no elevation request needs the process single-threaded any more
   // Orbis: fresh fault history per run (pf.log otherwise appends forever).
   {
     snprintf(g_orbis_pf_log, sizeof(g_orbis_pf_log), "%s", OrbisLogPath("pf.log").c_str()); // vk-285-33
@@ -3000,47 +2996,23 @@ int main()
   orbis_boot_phase("cover prefetch done");
 #endif
 
-  // Elevation (live-15, 2.02; see orbis-shims/ProsperoHenJailbreak.cpp). This runs
-  // here, after the single-threaded cover prefetch and BEFORE the deferred boot-log
-  // pump below, so a Lapy request is sent with only the main thread alive -- the
-  // daemon rejects a multi-threaded target and consumes the marker either way.
-  // 2.02 (AI-assisted): orbis_elevate tries the Lapy daemon AND the etaHEN/OnionHEN/Helper request (2.01 had only Lapy:
-  // 4 x 10 s of black screen on every other console, then no elevation), the one that worked last time first, and nothing
-  // when already root; the ports (orbis_try_jailbreak) are its last resort. cache/elevation.txt keeps what worked.
-  extern const char* orbis_elevate(const char* hint, bool (*try_ports)());
+  // Primary: etaHEN/OnionHEN download0 file-broker jailbreak (needs PPSA99203
+  // in the HEN app_jailbreak allowlist). Falls back to the legacy CMD ports.
+  // (Back to this: the Lapy owned-root daemon request of live-15 and 2.02's
+  // orbis_elevate are gone; orbis-shims/ProsperoHenJailbreak.cpp is the 0ca9214 one.)
+  extern bool orbis_hen_jailbreak();
   extern bool orbis_probe_jit();
   extern void orbis_log_hen_config();
   orbis_log_hen_config();
-  {
-    const std::string cache_path = OrbisDir("cache") + "/elevation.txt";
-    char last[32] = {};
-    if (FILE* f = fopen(cache_path.c_str(), "r"))
-    {
-      if (!fgets(last, sizeof(last), f))
-        last[0] = 0;
-      fclose(f);
-      last[strcspn(last, "\r\n \t")] = 0;
-    }
-    const double t_elev = orbis_mono_seconds();
-    const char* method = orbis_elevate(last, orbis_try_jailbreak);
-    if (std::strcmp(method, "none") != 0)
-      g_jailbreak_ok = 1;
-    orbis_boot_phase("elevation took %.0f ms via %s (last start: %s)", (orbis_mono_seconds() - t_elev) * 1000.0, method,
-      last[0] ? last : "not known");
-    // "already" says nothing about which one answers; keep what was there.
-    if (std::strcmp(method, "already") != 0 && std::strcmp(method, last) != 0)
-    {
-      if (FILE* f = fopen(cache_path.c_str(), "w"))
-      {
-        fprintf(f, "%s\n", method);
-        fclose(f);
-      }
-    }
-  }
-  // live-15: elevation is done (the request window is over), so it is safe to
-  // start the boot-log pump thread on the console where /data showed only now;
-  // the early lines kept in memory are flushed into boot.log here.
-  orbis_boot_log_begin_deferred();
+  const double t_elev = orbis_mono_seconds();
+  const bool hen_ok = orbis_hen_jailbreak();
+  if (hen_ok)
+    g_jailbreak_ok = 1;
+  else
+    orbis_try_jailbreak();
+  orbis_boot_phase("elevation took %.0f ms (etaHEN/OnionHEN request %s)", (orbis_mono_seconds() - t_elev) * 1000.0,
+    hen_ok ? "answered" : "not answered; the ports were tried");
+  orbis_boot_log_begin_deferred(); // a no-op now (the pump is held at once again); kept so the function is still used
 #ifdef ORBIS_VULKAN
   orbis_log_flag_access("after the jailbreak");
 #endif
