@@ -1845,15 +1845,28 @@ int sysctlbyname(const char* name, void* oldp, size_t* oldlenp, const void* newp
 // again in play ([cpuclk] every 5 s, OrbisEEDiag.cpp).
 static void orbis_clock_survey()
 {
-  const auto t0 = std::chrono::steady_clock::now();
-  const unsigned long long c0 = __builtin_ia32_rdtsc();
-  auto t1 = t0;
-  while ((t1 = std::chrono::steady_clock::now()) - t0 < std::chrono::milliseconds(50))
+  // 2.03: the 50 ms busy wait that measured the TSC was most of the 60 ms between elevation and the surveyed console on every start.
+  // The kernel states the TSC rate (machdep.tsc_freq: 1596291202 Hz where it was measured as 1596.29 MHz); it is measured only when
+  // the kernel does not say.
+  double tsc_mhz = 0.0;
   {
+    unsigned long long tsc = 0;
+    size_t len = sizeof(tsc);
+    if (sysctlbyname("machdep.tsc_freq", &tsc, &len, nullptr, 0) == 0 && tsc > 100000000ULL)
+      tsc_mhz = static_cast<double>(tsc) / 1e6;
   }
-  const unsigned long long c1 = __builtin_ia32_rdtsc();
-  const double sec = std::chrono::duration<double>(t1 - t0).count();
-  const double tsc_mhz = sec > 0.0 ? static_cast<double>(c1 - c0) / sec / 1e6 : 0.0;
+  if (tsc_mhz <= 0.0)
+  {
+    const auto t0 = std::chrono::steady_clock::now();
+    const unsigned long long c0 = __builtin_ia32_rdtsc();
+    auto t1 = t0;
+    while ((t1 = std::chrono::steady_clock::now()) - t0 < std::chrono::milliseconds(50))
+    {
+    }
+    const unsigned long long c1 = __builtin_ia32_rdtsc();
+    const double sec = std::chrono::duration<double>(t1 - t0).count();
+    tsc_mhz = sec > 0.0 ? static_cast<double>(c1 - c0) / sec / 1e6 : 0.0;
+  }
   double ratio = 0.0;
   for (int i = 0; i < 3; i++)
     ratio = std::max(ratio, OrbisCoreCyclesPerTsc());
@@ -2867,6 +2880,15 @@ static void orbis_vk_environment()
 #endif
 
 
+extern "C" unsigned long sceKernelGetProcessTime(void); // libkernel: microseconds since the process started
+// The process time at the first static constructor of the eboot (priority 101: before the other initialisers of this file's program): the
+// OS had loaded the app and libc.prx by then; what lies between this and main() is the static initialisers of everything linked in.
+static unsigned long g_first_ctor_us = 0;
+__attribute__((constructor(101))) static void orbis_first_static_constructor()
+{
+  g_first_ctor_us = sceKernelGetProcessTime();
+}
+
 int main()
 {
   g_boot_t0 = orbis_mono_seconds(); // 2.02: the origin of the [boot] t+ lines
@@ -2896,6 +2918,14 @@ int main()
   printf("[boot] main=%p\n", (void*)&main);
   orbis_boot_early_log("[boot] build=" ORBIS_BUILD_TAG); // live-15: kept in memory on the deferred-log path
   orbis_boot_phase("main started%s", g_boot_defer_hold ? " (boot log held until after elevation)" : "");
+  // 2.03: how long the process had run when main() began: the OS starting the app (its sandbox, mapping the eboot and libc.prx, the
+  // static initialisers), which the t+ lines below cannot see. The black screen after a click is this plus the t+ time to the shelf.
+  {
+    const unsigned long at_main = sceKernelGetProcessTime();
+    orbis_boot_phase("the process had run %lu ms when main started: %lu ms before the first static constructor (the OS loading the app), "
+      "%lu ms of static initialisers after it",
+      at_main / 1000UL, g_first_ctor_us / 1000UL, (at_main - g_first_ctor_us) / 1000UL);
+  }
   {
     // vk-285-91: what VZEROUPPER costs on this CPU. The GS thread's profiles (vk-285-89/90) had 5-7% of
     // their samples on the instruction right after one, so the eboot is now built with -mno-vzeroupper
@@ -2927,6 +2957,7 @@ int main()
 #ifdef ORBIS_VULKAN
   orbis_event_log_init(OrbisLogPath("settings.log")); // vk-285-51
 #endif
+  orbis_boot_phase("vzeroupper benchmark and event log done");
   orbis_eventf("app start: %s (pid %d)", orbis_build_label().c_str(), (int)getpid());
   {
     // vk-285-51: the crash printer (orbis-shims/ProsperoCrash.cpp) from the start, so the shelf and
@@ -2971,13 +3002,16 @@ int main()
   }
 #endif
   fflush(stdout);
+  orbis_boot_phase("signal handlers, driver names, pid file, stack guard, memory window survey done");
 
   // On-screen debug overlay (VideoOut canvas, separate thread).
   ps5::debug::set_line(1, "main started");
   // vk-285-110: the shelf's and the notifications' text in the PS5's language (fe_i18n.cpp), with testers'
   // fixes from lang/<code>.txt when /data is readable here (again after the jailbreak).
   orbis_frontend_set_language(OrbisDir("lang"));
+  orbis_boot_phase("language set");
   sys_notify(fe::Tr(g_orbis_test_build > 0 ? fe::Str::NotifyStartingTest : fe::Str::NotifyStarting)); // vk-285-50: the new name
+  orbis_boot_phase("start-up notification sent");
   // vk-285-44: only the cover downloads run before the HEN jailbreak. HTTPS from the frontend
   // failed after it (vk-285-41/42: the handshake to raw.githubusercontent.com hung, or ended in
   // 0x8095F00C, "unknown CA") and worked before it (vk-285-43, and the user's Twiso, which fetches
@@ -2989,6 +3023,7 @@ int main()
   bool frontend_ran = false;
 #ifdef ORBIS_VULKAN
   orbis_log_flag_access("before the jailbreak");
+  orbis_boot_phase("flag folder looked at");
   orbis_scan_usb("before the jailbreak"); // test build 1: whether the sandbox shows USB drives yet
   orbis_boot_phase("cover prefetch starting");
   if (!orbis_flag("nofrontend") && !orbis_flag("nomenu") && !orbis_flag("nocoverdl"))
@@ -3022,7 +3057,9 @@ int main()
 #endif
   orbis_frontend_set_language(OrbisDir("lang")); // vk-285-110: lang/<code>.txt may only be readable now
   // Test build 1 (vk-285-55): what the console is, in boot.log and the settings log.
+  orbis_boot_phase("data layout and language ready");
   s_console_info = orbis_console_survey();
+  orbis_boot_phase("console surveyed");
   orbis_eventf("console: %s", s_console_info.c_str());
   // geteuid() may keep reporting 1 even with working creds; the JIT page
   // probe is the ground truth for privilege on this firmware.

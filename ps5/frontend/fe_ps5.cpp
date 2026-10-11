@@ -1666,6 +1666,11 @@ std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* buil
 {
 	*ran = false;
 	const double t0 = Now();
+	// 2.03: where the shelf's start goes ("[frontend] +N ms: ..." from the start of this function).
+	auto phase = [t0](const char* what) {
+		std::printf("[frontend] +%.0f ms: %s\n", (Now() - t0) * 1000.0, what);
+		std::fflush(stdout);
+	};
 	SetSerialCacheFile(paths.serial_cache); // vk-285-108
 	SetGameDbFile(paths.gamedb_file);       // vk-285-113
 	SetShareRoots(paths.share_roots);       // vk-285-156
@@ -1704,6 +1709,7 @@ std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* buil
 	std::printf("[frontend] %zu disc image(s), %d on USB, %d on NFS shares, scanned in %.0f ms\n", games.size(), on_usb, on_nfs,
 		(Now() - t0) * 1000.0);
 	std::fflush(stdout);
+	phase("games scanned");
 	WriteUsbList(paths.usb_list, games);
 	// Keep the shelf available without games too, for settings and account sign-in.
 	const std::string last = ReadLastGame(paths.top_dir);
@@ -1719,6 +1725,7 @@ std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* buil
 	(void)sceUserServiceGetInitialUser(&user);
 	(void)scePadInit();
 	const int pad = user >= 0 ? scePadOpen(user, 0, 0, nullptr) : -1;
+	phase("user service and pad ready");
 	if (pad < 0)
 	{
 		std::printf("[frontend] no controller (%d); the plain list takes over\n", pad);
@@ -1727,7 +1734,9 @@ std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* buil
 
 	// Heap objects, so a download still running at the end can be left to finish on its own.
 	Display* display = new Display();
-	if (!display->Init())
+	const bool display_ok = display->Init();
+	phase("display (Vulkan instance, device, mode, swapchain) ready");
+	if (!display_ok)
 	{
 		display->Destroy();
 		delete display;
@@ -1751,6 +1760,7 @@ std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* buil
 		return {};
 	}
 
+	phase("fonts and renderer ready");
 	CoverService* covers = new CoverService();
 	CoverConfig cc;
 	cc.manual_dir = paths.covers_dir;
@@ -1760,6 +1770,7 @@ std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* buil
 	cc.download_usb_only = true; // vk-285-110: the rest came from the prefetch, before the jailbreak
 	covers->Start(games, fonts, cc, CoverGet); // 2026-10-10: was libSceHttp2 (g_http), which fails after the jailbreak
 
+	phase("cover service started");
 	// The key sounds (vk-285-47). Without an audio port the shelf is simply quiet.
 	Mixer* mixer = nullptr;
 	AudioOut* audio = nullptr;
@@ -1887,7 +1898,9 @@ std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* buil
 	// live-22 (AI-assisted): while a PS2 disc is being copied (orbis-shims/ProsperoDiscDump.cpp), the shelf shows a
 	// spinning-disc entry with the live percentage, read from this file (the same path the dumper writes).
 	acfg.disc_dump_progress = OrbisLogPath("disc-dump-progress.txt");
+	phase("app configured (sound, texture packs, online patches)");
 	bool ok = app.Init(&renderer, fonts, games, covers, acfg);
+	phase("app initialised");
 	std::printf("[frontend] up in %.0f ms (%s)\n", (Now() - t0) * 1000.0, ok ? "ok" : renderer.error().c_str());
 	std::fflush(stdout);
 	// vk-285-50: the QR tile's address, looked up again every few seconds in case the IP changes.
