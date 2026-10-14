@@ -1631,6 +1631,10 @@ int orbis_frontend_prefetch_covers(const OrbisFrontendPaths& paths, double budge
 static std::mutex g_launch_lock;
 static std::string g_launch_request; // under g_launch_lock
 static bool g_shelf_up = false;      // under g_launch_lock
+// 2.10: the question about a disc just put in (orbis_frontend_ask_disc), under g_launch_lock.
+static std::string g_ask_title, g_ask_serial;
+static bool g_ask_pending = false; // asked and not answered
+static int g_ask_answer = 0;       // 0 none yet, 1 copy it, 2 play from the disc, 3 not now
 
 uint64_t orbis_frontend_free_bytes(const std::string& dir)
 {
@@ -1646,6 +1650,43 @@ bool orbis_frontend_request_launch(const std::string& path)
 	return true;
 }
 
+bool orbis_frontend_ask_disc(const std::string& title, const std::string& serial)
+{
+	std::lock_guard<std::mutex> lock(g_launch_lock);
+	if (!g_shelf_up)
+		return false;
+	g_ask_title = title;
+	g_ask_serial = serial;
+	g_ask_answer = 0;
+	g_ask_pending = true;
+	return true;
+}
+
+int orbis_frontend_disc_answer()
+{
+	std::lock_guard<std::mutex> lock(g_launch_lock);
+	if (g_ask_answer != 0)
+	{
+		const int a = g_ask_answer;
+		g_ask_answer = 0;
+		g_ask_pending = false;
+		return a;
+	}
+	if (!g_shelf_up)
+	{
+		g_ask_pending = false;
+		return -1;
+	}
+	return 0;
+}
+
+void orbis_frontend_cancel_disc_ask()
+{
+	std::lock_guard<std::mutex> lock(g_launch_lock);
+	g_ask_pending = false;
+	g_ask_answer = 0;
+}
+
 static std::string TakeLaunchRequest()
 {
 	std::lock_guard<std::mutex> lock(g_launch_lock);
@@ -1659,7 +1700,10 @@ static void SetShelfUp(bool up)
 	std::lock_guard<std::mutex> lock(g_launch_lock);
 	g_shelf_up = up;
 	if (!up)
+	{
 		g_launch_request.clear();
+		g_ask_pending = false;
+	}
 }
 
 std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* build_tag, bool* ran)
@@ -1898,6 +1942,20 @@ std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* buil
 	// live-22 (AI-assisted): while a PS2 disc is being copied (orbis-shims/ProsperoDiscDump.cpp), the shelf shows a
 	// spinning-disc entry with the live percentage, read from this file (the same path the dumper writes).
 	acfg.disc_dump_progress = OrbisLogPath("disc-dump-progress.txt");
+	// 2.10: the question the disc watcher asks about a disc just put in (play from the disc, or copy it).
+	acfg.disc_ask_poll = [](std::string& title, std::string& serial) {
+		std::lock_guard<std::mutex> lock(g_launch_lock);
+		if (!g_ask_pending)
+			return false;
+		title = g_ask_title;
+		serial = g_ask_serial;
+		return true;
+	};
+	acfg.disc_ask_answer = [](int answer) {
+		std::lock_guard<std::mutex> lock(g_launch_lock);
+		g_ask_answer = answer;
+		g_ask_pending = false;
+	};
 	phase("app configured (sound, texture packs, online patches)");
 	bool ok = app.Init(&renderer, fonts, games, covers, acfg);
 	phase("app initialised");

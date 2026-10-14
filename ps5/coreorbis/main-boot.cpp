@@ -3010,6 +3010,41 @@ int main()
   // fixes from lang/<code>.txt when /data is readable here (again after the jailbreak).
   orbis_frontend_set_language(OrbisDir("lang"));
   orbis_boot_phase("language set");
+  // 2.10 (AI-assisted): the disc tile's marker is read HERE, before the jailbreak. After it /app0 no longer leads to this app's own folder (the
+  // same thing vk-285-133 found for param.json), so the read further down (vk-285-169) never found disc-tile.txt and every press on a tile
+  // ended on the shelf's question (a console run: boot.log had no "disc tile" line). Only its first line is kept; what it names is acted on below.
+  std::string tile_drive;
+  if (FILE* tf = fopen("/app0/disc-tile.txt", "r"))
+  {
+    char line[128] = {};
+    if (fgets(line, sizeof(line), tf))
+    {
+      size_t n = strlen(line);
+      while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' '))
+        line[--n] = '\0';
+      tile_drive = line;
+    }
+    fclose(tf);
+  }
+  printf("[boot] disc tile marker (/app0/disc-tile.txt before the jailbreak): %s\n", tile_drive.empty() ? "none" : tile_drive.c_str());
+  fflush(stdout);
+  // 2.10 (AI-assisted): the "Reload PS2 Disc" tile (its disc-tile.txt says "reload"). There is nothing to start. A note is left for the disc payload
+  // (it cleans up the stale sandboxes, has ShadowMount+ scan again and makes the disc tiles afresh) and the app closes at once, before the
+  // start-up notification, the shelf and the jailbreak. If /data cannot be written from here (the helper's mount hook did not take), the payload
+  // sees this app's sandbox appear instead.
+  if (tile_drive == "reload")
+  {
+    printf("[boot] reload tile: leaving a note for the disc payload and closing\n");
+    if (FILE* rf = fopen("/data/PCSX2/reload.req", "w"))
+    {
+      fprintf(rf, "%lld\n", (long long)time(nullptr));
+      fclose(rf);
+    }
+    else
+      printf("[boot] reload tile: /data/PCSX2/reload.req cannot be written (errno %d): the payload will see the sandbox instead\n", errno);
+    fflush(stdout);
+    OrbisExitApp(0);
+  }
   sys_notify(fe::Tr(g_orbis_test_build > 0 ? fe::Str::NotifyStartingTest : fe::Str::NotifyStarting)); // vk-285-50: the new name
   orbis_boot_phase("start-up notification sent");
   // vk-285-44: only the cover downloads run before the HEN jailbreak. HTTPS from the frontend
@@ -3227,6 +3262,54 @@ int main()
   // HTTPS failed there on vk-285-41/42, with etaHEN's jailbreak; with the PS5SX2 Helper's it hasn't been
   // tried, and boot.log's "[frontend] cover ..." lines will show it. When it fails, the next start's
   // prefetch fetches them from cache/usb-games.txt, as before.
+  // 2.10 (AI-assisted): a disc tile. The disc tile payload makes a copy of this app under another title ID (/data/homebrew/PPSA9923x) for each
+  // PS2 disc in a drive, with a disc-tile.txt in its folder (the app's /app0) naming the drive. Started from the home screen, that app starts
+  // the disc with no shelf: its copy in games/ when there is a whole one, else straight from the drive (and settings under the disc's name).
+  // Nothing is copied from here. The file is read, not deleted: it belongs to the tile.
+  if (s_game_path.empty())
+  {
+    std::string drive = tile_drive; // read before the jailbreak (above): after it /app0 does not lead to this app's folder
+    if (drive.empty())
+    {
+      if (FILE* tf = fopen("/app0/disc-tile.txt", "r"))
+      {
+        char line[128] = {};
+        if (fgets(line, sizeof(line), tf))
+        {
+          size_t n = strlen(line);
+          while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' '))
+            line[--n] = '\0';
+          drive = line;
+        }
+        fclose(tf);
+      }
+    }
+    if (!drive.empty() && OrbisDiscDrive::IsDrivePath(drive))
+    {
+      std::string why;
+      if (!OrbisDiscDrive::WaitReady(drive, 10000, &why))
+        printf("[disc] disc tile: %s: %s\n", drive.c_str(), why.c_str());
+      else
+      {
+        const std::string serial = fe::ReadSerial(drive);
+        const std::string copy = serial.empty() ? std::string() : OrbisFindDiscCopy(serial, drive);
+        if (!copy.empty())
+        {
+          s_game_path = copy;
+          printf("[disc] disc tile: %s holds %s: its copy %s starts\n", drive.c_str(), serial.c_str(), copy.c_str());
+        }
+        else if (!serial.empty())
+        {
+          s_game_path = drive;
+          printf("[disc] disc tile: %s holds %s: no copy, so it starts from the drive\n", drive.c_str(), serial.c_str());
+        }
+        else
+          printf("[disc] disc tile: %s holds no PS2 game any more: the shelf opens\n", drive.c_str());
+        orbis_eventf("disc tile: %s %s", drive.c_str(), s_game_path.empty() ? "(nothing to start)" : s_game_path.c_str());
+        fflush(stdout);
+      }
+    }
+  }
   // vk-285-160 (AI-assisted): the disc-auto daemon ELF (ps5/disclaunch/disc_launch.c) found the ISO
   // for the disc in the drive and wrote its full path here.  Read and delete the file immediately
   // (it is always transient) so the next normal start uses the shelf.

@@ -62,6 +62,11 @@ struct AppConfig
 	// While a PS2 disc is being copied, the shelf polls it and shows a spinning-disc entry with the live percentage, until
 	// the copy ends (the file is removed, and the game launches). Empty: no such entry (the host sets it for its test).
 	std::string disc_dump_progress;
+	// 2.10: a PS2 disc put in the drive that is not copied yet: the shelf asks what to do with it (play it straight from the disc, or
+	// copy it first). disc_ask_poll gives the pending question (false when there is none); disc_ask_answer takes the answer:
+	// 1 copy it, 2 play from the disc, 3 not now. Unset: no question is shown.
+	std::function<bool(std::string& title, std::string& serial)> disc_ask_poll;
+	std::function<void(int)> disc_ask_answer;
 };
 
 class App
@@ -196,6 +201,14 @@ private:
 	void BuildPicker(std::vector<UiVertex>& ui, float x, float sw, float y, float sh, float k, uint32_t accent);
 	FolderPicker m_picker;
 	void UpdateAccount(const Input& in);
+	// 2.10: the question about a disc just put in (AppConfig::disc_ask_poll), a panel over the shelf.
+	void PollDiscAsk();
+	void UpdateDiscAsk(const Input& in);
+	void BuildDiscAsk(std::vector<UiVertex>& ui, float W, float H, float k, uint32_t accent);
+	bool m_ask_on = false;
+	std::string m_ask_title, m_ask_serial;
+	int m_ask_sel = 0;     // 0 play from the disc, 1 copy it first
+	float m_ask_anim = 0;  // the panel's fade
 	void BuildAccount(std::vector<UiVertex>& ui, float W, float H, float k, uint32_t accent);
 	void BuildAccountKeyboard(std::vector<UiVertex>& ui, float x, float y, float w, float k);
 	// vk-285-139: the panel's keyboard for any field: its title, page and focused key.

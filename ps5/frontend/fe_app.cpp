@@ -544,6 +544,8 @@ void App::Update(double dt, const Input& in)
 	PollGameAchievements();
 	const float fdt = static_cast<float>(std::min(dt, 0.1));
 	m_dump_spin += fdt; // live-22: the dump disc's rotation, advanced whether or not a dump is on
+	PollDiscAsk();
+	m_ask_anim += ((m_ask_on ? 1.0f : 0.0f) - m_ask_anim) * (1.0f - std::exp(-fdt * 16.0f));
 
 	// 2026-10-05: the account panel fades in and out, and its keyboard slides up under it (AI-assisted).
 	{
@@ -567,6 +569,11 @@ void App::Update(double dt, const Input& in)
 			m_launch_time = m_time;
 		if (m_time - m_launch_time > 0.6 && !m_game_achievements.busy)
 			m_done = true;
+	}
+	else if (m_ask_on)
+	{
+		UpdateDiscAsk(in);
+		m_prev = in;
 	}
 	else if (m_account.open)
 	{
@@ -1198,6 +1205,8 @@ void App::Build(FrameDesc& f, const std::string& clock)
 	}
 	if (m_account_anim > 0.001f)
 		BuildAccount(ui, W, H, k, accent);
+	if (m_ask_anim > 0.001f)
+		BuildDiscAsk(ui, W, H, k, accent);
 }
 
 // ---- vk-285-114: the options sheet ---------------------------------------------------------------------------------
@@ -2852,6 +2861,123 @@ void App::UpdateAccount(const Input& in)
 		else
 			m_account.StartKeyboard();
 	}
+}
+
+// 2.10: a PS2 disc was put in the drive and is not copied: the disc watcher (orbis-shims/ProsperoDiscDump.cpp) asks here whether to
+// play it straight from the disc or copy it first. Left/Right choose, Cross confirms, Circle leaves the disc alone for now.
+void App::PollDiscAsk()
+{
+	if (!m_cfg.disc_ask_poll)
+		return;
+	std::string title, serial;
+	const bool pending = m_cfg.disc_ask_poll(title, serial);
+	if (pending && !m_ask_on && !m_launching)
+	{
+		m_ask_on = true;
+		m_ask_title = title;
+		m_ask_serial = serial;
+		m_ask_sel = 0;
+		m_held = 0;
+		Sound(Sfx::Move, 0.0f);
+		std::printf("[frontend] disc ask: %s (%s)\n", title.c_str(), serial.c_str());
+		std::fflush(stdout);
+	}
+	else if (!pending && m_ask_on)
+		m_ask_on = false; // the disc was taken out, or the question was answered elsewhere
+}
+
+void App::UpdateDiscAsk(const Input& in)
+{
+	const bool left = in.left && !m_prev.left, right = in.right && !m_prev.right;
+	int answer = 0;
+	if (left || right)
+	{
+		m_ask_sel = 1 - m_ask_sel;
+		Sound(Sfx::Move, left ? -0.2f : 0.2f);
+	}
+	else if (in.cross && !m_prev.cross)
+		answer = m_ask_sel == 0 ? 2 : 1;
+	else if (in.circle && !m_prev.circle)
+		answer = 3;
+	if (answer != 0)
+	{
+		std::printf("[frontend] disc ask: answered %s\n", answer == 2 ? "play from the disc" : answer == 1 ? "copy it" : "not now");
+		std::fflush(stdout);
+		if (m_cfg.disc_ask_answer)
+			m_cfg.disc_ask_answer(answer);
+		m_ask_on = false;
+		Sound(answer == 3 ? Sfx::Edge : Sfx::Launch, 0.0f);
+	}
+}
+
+void App::BuildDiscAsk(std::vector<UiVertex>& ui, float W, float H, float k, uint32_t accent)
+{
+	const float e = Smoothstep(0.0f, 1.0f, m_ask_anim);
+	const size_t begin = ui.size();
+	const uint32_t hi = Rgba(1, 1, 1), mid = Rgba(0.76f, 0.74f, 0.86f), lo = Rgba(0.56f, 0.54f, 0.68f);
+	const uint32_t ink = Rgba(0.07f, 0.06f, 0.16f), inkmid = Rgba(0.30f, 0.28f, 0.44f);
+	// The shelf behind, dimmed so that the panel is what the eye goes to.
+	Fonts::AddRoundedRect(ui, 0, 0, W, H, 0.0f, Rgba(0.01f, 0.01f, 0.03f, 0.76f));
+
+	const float pw = 1560 * k, ph = 740 * k, px = (W - pw) * 0.5f, py = (H - ph) * 0.5f - 20 * k;
+	const float pad = 84 * k, cx = px + pad, inner = pw - 2 * pad;
+	// The panel: a soft shadow, a faint rim, the dark body, and a thin accent line along its top.
+	Fonts::AddRoundedRect(ui, px - 8 * k, py + 14 * k, pw + 16 * k, ph + 16 * k, 52 * k, Rgba(0, 0, 0, 0.38f));
+	Fonts::AddRoundedRect(ui, px - 2 * k, py - 2 * k, pw + 4 * k, ph + 4 * k, 46 * k, Rgba(1, 1, 1, 0.14f));
+	Fonts::AddRoundedRect(ui, px, py, pw, ph, 44 * k, Rgba(0.045f, 0.050f, 0.105f, 0.985f));
+	Fonts::AddRoundedRect(ui, px + 120 * k, py, pw - 240 * k, 6 * k, 3 * k, accent);
+
+	// The disc: a bright rim, a darker face with a ring in the accent colour, and the hole.
+	const float dr = 62 * k, dcx = cx + dr, dcy = py + 148 * k;
+	Fonts::AddRoundedRect(ui, dcx - dr - 6 * k, dcy - dr - 6 * k, 2 * (dr + 6 * k), 2 * (dr + 6 * k), dr + 6 * k, Rgba(1, 1, 1, 0.10f));
+	Fonts::AddRoundedRect(ui, dcx - dr, dcy - dr, 2 * dr, 2 * dr, dr, Rgba(0.80f, 0.80f, 0.92f, 0.95f));
+	Fonts::AddRoundedRect(ui, dcx - dr * 0.80f, dcy - dr * 0.80f, 2 * dr * 0.80f, 2 * dr * 0.80f, dr * 0.80f, Rgba(0.10f, 0.10f, 0.22f, 1.0f));
+	Fonts::AddRoundedRect(ui, dcx - dr * 0.50f, dcy - dr * 0.50f, 2 * dr * 0.50f, 2 * dr * 0.50f, dr * 0.50f, accent);
+	Fonts::AddRoundedRect(ui, dcx - dr * 0.44f, dcy - dr * 0.44f, 2 * dr * 0.44f, 2 * dr * 0.44f, dr * 0.44f, Rgba(0.10f, 0.10f, 0.22f, 1.0f));
+	Fonts::AddRoundedRect(ui, dcx - dr * 0.17f, dcy - dr * 0.17f, 2 * dr * 0.17f, 2 * dr * 0.17f, dr * 0.17f, Rgba(0.80f, 0.80f, 0.92f, 0.95f));
+
+	// What is in the drive: a small label, the game's name, its serial.
+	const float tx = cx + 2 * dr + 56 * k, tw = inner - 2 * dr - 56 * k;
+	m_fonts->AddText(ui, "PS2 DISC IN THE DRIVE", tx, py + 96 * k, 26 * k, mid, 0.40f);
+	m_fonts->AddText(ui, Fit(*m_fonts, m_ask_title, 64 * k, tw).c_str(), tx, py + 168 * k, 64 * k, hi, 0.55f);
+	if (!m_ask_serial.empty())
+		m_fonts->AddText(ui, m_ask_serial.c_str(), tx, py + 214 * k, 28 * k, lo, 0.20f);
+
+	Fonts::AddRoundedRect(ui, cx, py + 262 * k, inner, 2 * k, 0, Rgba(1, 1, 1, 0.10f));
+	m_fonts->AddText(ui, "How do you want to play it?", cx, py + 322 * k, 34 * k, mid, 0.25f);
+
+	// Two cards, side by side: the focused one is white with dark text and a glow in the accent colour.
+	const float gap = 36 * k, cw = (inner - gap) * 0.5f, ch = 220 * k, cy = py + 360 * k;
+	auto card = [&](float x0, const char* title, const char* line1, const char* line2, bool focused) {
+		if (focused)
+		{
+			Fonts::AddRoundedRect(ui, x0 - 8 * k, cy - 8 * k, cw + 16 * k, ch + 16 * k, 46 * k, Rgba(1, 1, 1, 0.16f));
+			Fonts::AddRoundedRect(ui, x0 - 4 * k, cy - 4 * k, cw + 8 * k, ch + 8 * k, 42 * k, accent);
+			Fonts::AddRoundedRect(ui, x0, cy, cw, ch, 38 * k, Rgba(1, 1, 1, 0.96f));
+		}
+		else
+			Fonts::AddRoundedRect(ui, x0, cy, cw, ch, 38 * k, Rgba(1, 1, 1, 0.07f));
+		const uint32_t t = focused ? ink : hi, c = focused ? inkmid : mid;
+		m_fonts->AddText(ui, title, x0 + cw * 0.5f, cy + 84 * k, 46 * k, t, 0.55f, Fonts::Center);
+		m_fonts->AddText(ui, line1, x0 + cw * 0.5f, cy + 140 * k, 29 * k, c, 0.15f, Fonts::Center);
+		m_fonts->AddText(ui, line2, x0 + cw * 0.5f, cy + 182 * k, 29 * k, c, 0.15f, Fonts::Center);
+	};
+	card(cx, "Play from disc", "Starts right now.", "The disc stays in the drive.", m_ask_sel == 0);
+	card(cx + cw + gap, "Copy to storage", "A few minutes, then it plays.", "After that the disc can come out.", m_ask_sel == 1);
+
+	// The buttons, in small chips along the bottom.
+	float hx = cx;
+	auto hint = [&](const char* key, const char* what) {
+		const float kpx = 24 * k, kw = m_fonts->Measure(key, kpx) + 36 * k, kh = 46 * k, hy = py + ph - 100 * k;
+		Fonts::AddRoundedRect(ui, hx, hy, kw, kh, kh * 0.5f, Rgba(1, 1, 1, 0.14f));
+		m_fonts->AddText(ui, key, hx + kw * 0.5f, hy + kh * 0.5f + 9 * k, kpx, hi, 0.45f, Fonts::Center);
+		hx += kw + 14 * k;
+		hx += m_fonts->AddText(ui, what, hx, hy + kh * 0.5f + 9 * k, kpx, lo, 0.20f) + 40 * k;
+	};
+	hint("Left / Right", "choose");
+	hint("Cross", "confirm");
+	hint("Circle", "not now");
+	FadeRange(ui, begin, ui.size(), e);
 }
 
 void App::BuildAccount(std::vector<UiVertex>& ui, float W, float H, float k, uint32_t accent)

@@ -14,4 +14,8 @@ bool OrbisDiscDumpBusy();
 // now on the watcher leaves that drive alone: it doesn't look at it, copy its disc or start its copy. False (and nothing
 // changes) when that drive's disc is being copied right now. OrbisDiscDumpRelease gives the drive back to the watcher.
 bool OrbisDiscDumpClaim(const std::string& device);
+
+// 2.10 (AI-assisted): the copy of the PS2 disc `serial` in drive `device` that games/ holds (a whole one, with no ".incomplete" mark next to
+// it), or empty. For a disc tile: the game starts from the copy when there is one, else from the drive.
+std::string OrbisFindDiscCopy(const std::string& serial, const std::string& device);
 void OrbisDiscDumpRelease(const std::string& device);

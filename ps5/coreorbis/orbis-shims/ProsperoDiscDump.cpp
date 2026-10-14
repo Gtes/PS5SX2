@@ -375,6 +375,38 @@ namespace
 	}
 	void ClearDumpProgress() { unlink(DumpProgressPath().c_str()); }
 
+	// 2.10: the disc's name as the shelf and its copy show it.
+	std::string DiscTitle(const std::string& serial)
+	{
+		fe::GameInfo gi;
+		gi.serial = serial;
+		gi.title = serial;
+		fe::ApplyGameDbTitle(gi);
+		return gi.title.empty() || gi.title == serial ? std::string("PS2 disc") : gi.title;
+	}
+
+	// 2.10: the shelf's answer for the disc daemon (disclaunch/disc_launch.c): "<serial> copy|play|later", removed when the disc leaves.
+	void WriteAskChoice(const std::string& serial, const char* word)
+	{
+		if (FILE* f = fopen(OrbisLogPath("disc-ask-choice.txt").c_str(), "w"))
+		{
+			fprintf(f, "%s %s\n", serial.c_str(), word);
+			fclose(f);
+		}
+	}
+
+	// 2.10: games/ already holds this disc (the copy's own name at the disc's size, or an image of the same serial): no question is
+	// asked, its game starts from the copy as before.
+	bool AlreadyCopied(const Node& node, const std::string& serial)
+	{
+		const std::string games = OrbisDir("games");
+		const std::string iso = games + "/" + Clean(DiscTitle(serial) + " (" + serial + ")") + ".iso";
+		struct stat st;
+		if (stat(iso.c_str(), &st) == 0 && static_cast<uint64_t>(st.st_size) == node.bytes)
+			return true;
+		return !FindExisting(games, serial, node.bytes).empty();
+	}
+
 	// Copies the disc unless games/ has it. The copy's path when it's there in full at the end, else empty. vk-285-155:
 	// `clean` is set false when the copy had unreadable sectors (the caller then doesn't auto-start it).
 	std::string Dump(const Node& node, const std::string& serial, bool& clean)
@@ -710,6 +742,10 @@ namespace
 		std::string handled;
 		std::string failed;  // vk-285-155: a disc that didn't copy; not tried again until it leaves (no 3 s retry loop)
 		std::string pending; // a copy whose game waits for the shelf
+		std::string asked;    // 2.10: the disc the shelf was asked about (play from the disc, or copy it)
+		std::string unasked;  // 2.10: the disc that waits for a shelf (logged once)
+		std::string at_start; // 2.10: the disc that was already in when this run looked first (it started PS5SX2, or PS5SX2 was opened with it in): not asked about, copied as before
+		std::string declined; // 2.10: a disc the person said "not now" to (or whose question went away): left alone until it leaves
 		bool refg_done = false; // vk-285-159: one re-foreground attempt per boot, whatever the outcome (flag disc_refg)
 		const bool relaunch = TakeRelaunchMark();
 		const std::string recent = RecentAutoStart(kAutoStartGuardSeconds); // vk-285-155: a disc auto-started recently (a likely failed launch)
@@ -751,6 +787,7 @@ namespace
 
 			const std::vector<std::string> nodes = Candidates(first);
 			bool any_ps2 = false;
+			bool waiting = false;
 			for (const std::string& path : nodes)
 			{
 				// PR #34 port: a game plays from this drive (OrbisDiscDumpClaim): not looked at, not copied. A PS2 disc
@@ -802,6 +839,69 @@ namespace
 					refg_done = true;
 					TryReForeground(serial); // under flag disc_refg this re-execs and doesn't return
 				}
+				// 2.10: a disc not copied yet: the shelf asks whether to play it from the disc or copy it first (flag nodiscask: copied
+				// at once, as before). With no shelf up it is copied as before too.
+				if (first && at_start.empty())
+					at_start = serial;
+				if (serial == declined)
+					continue;
+				// A disc is copied only when the person chooses it on the shelf. With no shelf up (the PS5 home screen with PS5SX2 in the
+				// background, a game running, the app still starting) nothing is copied: the disc waits, and the question comes with the shelf.
+				if (!OrbisFlag("nodiscask") && !AlreadyCopied(node, serial))
+				{
+					if (asked != serial)
+					{
+						if (orbis_frontend_ask_disc(DiscTitle(serial), serial))
+						{
+							asked = serial;
+							waiting = true;
+							Log("%s: asked on the shelf: play from the disc, or copy it first", serial.c_str());
+							continue;
+						}
+						if (unasked != serial)
+						{
+							unasked = serial;
+							Log("%s: no shelf is up: not copied; the question comes when the shelf is up", serial.c_str());
+						}
+						continue;
+					}
+					else
+					{
+						const int answer = orbis_frontend_disc_answer();
+						if (answer == 0)
+						{
+							waiting = true;
+							continue;
+						}
+						if (answer == 2)
+						{
+							if (OrbisDiscDumpClaim(path) && orbis_frontend_request_launch(path))
+							{
+								WriteAskChoice(serial, "play");
+								Log("%s: playing straight from the drive %s", serial.c_str(), path.c_str());
+								OrbisNotifyPlain("PS2 disc: starting the game from the disc");
+								handled = serial;
+							}
+							else
+							{
+								WriteAskChoice(serial, "later");
+								Log("%s: could not start from the drive %s; left alone", serial.c_str(), path.c_str());
+								OrbisDiscDumpRelease(path);
+								declined = serial;
+							}
+							continue;
+						}
+						if (answer == 3 || answer < 0)
+						{
+							WriteAskChoice(serial, "later");
+							Log("%s: %s", serial.c_str(), answer == 3 ? "not now: the disc is left alone until it is taken out" : "the question went away: the disc is left alone");
+							declined = serial;
+							continue;
+						}
+						WriteAskChoice(serial, "copy");
+						Log("%s: copy it first (chosen on the shelf)", serial.c_str());
+					}
+				}
 				bool clean = true;
 				if (!BeginCopy(path))
 					continue; // PR #34 port: claimed for a game just now
@@ -835,6 +935,18 @@ namespace
 				WriteAutoStartMark(handled); // vk-285-155: so a force-off then reopen doesn't loop this game
 				pending.clear();
 			}
+			if (!any_ps2 && !asked.empty())
+			{
+				orbis_frontend_cancel_disc_ask(); // 2.10: the disc was taken out with the question open
+				asked.clear();
+				unlink(OrbisLogPath("disc-ask-choice.txt").c_str());
+			}
+			if (!any_ps2)
+			{
+				unasked.clear();
+				declined.clear();
+				at_start.clear();
+			}
 			if (!any_ps2 && (!handled.empty() || !failed.empty()))
 			{
 				if (!handled.empty())
@@ -852,7 +964,7 @@ namespace
 			if (logged.size() > 32)
 				logged.clear();
 			first = false;
-			sleep(3);
+			sleep(waiting ? 1 : 3); // 2.10: a question waits on the shelf: look for the answer every second
 		}
 		return nullptr;
 	}
@@ -909,6 +1021,24 @@ void OrbisDiscDumpStart()
 bool OrbisDiscDumpBusy()
 {
 	return s_busy.load();
+}
+
+std::string OrbisFindDiscCopy(const std::string& serial, const std::string& device)
+{
+	const uint64_t bytes = QuietMediaSize(device);
+	const std::string games = OrbisDir("games");
+	auto whole = [](const std::string& image) {
+		struct stat s;
+		return !image.empty() && stat((image + ".incomplete").c_str(), &s) != 0;
+	};
+	const std::string iso = games + "/" + Clean(DiscTitle(serial) + " (" + serial + ")") + ".iso";
+	struct stat st;
+	if (stat(iso.c_str(), &st) == 0 && (bytes == 0 || static_cast<uint64_t>(st.st_size) == bytes) && whole(iso))
+		return iso;
+	if (bytes == 0)
+		return {};
+	const std::string other = FindExisting(games, serial, bytes);
+	return whole(other) ? other : std::string();
 }
 
 bool OrbisDiscDumpClaim(const std::string& device)
