@@ -46,7 +46,7 @@ Expect rough edges. Bug reports with logs are very welcome, and so is patience.
 - **Rumble and an FPS graph.** The game's vibration goes to the controller, at the strength you choose, and a blue frame-rate graph can sit in the corner of the picture. The settings page switches them on and off, and chooses what the info box shows.
 - **Up to 4 players** with a multitap: the other PS5 users logged in when the game starts play on their own controllers.
 - **Fast forward** (experimental) on a button combo you choose, to skip videos.
-- **Games, BIOS and textures on a USB drive.** Games are found in the drive's top folder, `games/`, `PCSX2/games/` and `PS5SX2/games/`; a BIOS in `bios/`, `PCSX2/bios/` or `PS5SX2/bios/`.
+- **Games, BIOS and textures on a USB drive.** Games are found in the drive's top folder, `games/`, `PCSX2/games/` and `PS5SX2/games/`; a BIOS in `bios/`, `PCSX2/bios/` or `PS5SX2/bios/`. Once you name a game folder, a BIOS folder or a textures folder in the settings (*Folders*), only that folder is used for it, and *Scan USB drives* can leave the drives out altogether.
 - **USB keyboard and mouse** play as the PS2 controller, with PCSX2's own keys. This doesn't work on firmware 11.x and 12.00 yet: see [Known limitations](#known-limitations).
 - **Logs that survive.** The last sessions' boot, emulator and settings logs stay on the console, so a problem can be tracked down afterwards. When a game runs slow, a built-in profiler notes in the log which part of the emulator the time went to: logs from slow games are the most useful ones to send.
 
@@ -158,13 +158,14 @@ In a game, hold L2 + D-pad Down for 2 seconds and the PS5's own web browser open
 
 ## Texture packs
 
-**Downloading a pack:** press Square on a game. When archive.org's [PCSX2 HD Texture Packs](https://archive.org/details/pcsx2-hd-texture-packs) collection has a pack for it, the *HD texture pack* row shows its size: press Cross to download it. It downloads in the background (the shelf shows how far it is), unpacks into one file, `/data/PCSX2/textures/<serial>/replacements.pak`, switches on *Texture replacements* for that game and pops up when it's ready. A download that a game interrupts carries on when you're back on the shelf. Triangle twice cancels a download or deletes a pack PS5SX2 downloaded. The packs are made by the community; PS5SX2 only fetches them.
+**Downloading a pack:** press Square on a game. When archive.org's [PCSX2 HD Texture Packs](https://archive.org/details/pcsx2-hd-texture-packs) collection has a pack for it, the *HD texture pack* row shows its size: press Cross to download it. It downloads in the background (the shelf shows how far it is), unpacks into one file, `/data/PCSX2/textures/<serial>/replacements.pak`, switches on *Texture replacements* for that game and pops up when it's ready. A download that a game interrupts carries on when you're back on the shelf. Triangle twice cancels a download or deletes a pack PS5SX2 downloaded. The packs are made by the community; PS5SX2 only fetches them. A few more come from the community's Google Drive folder of HD packs (only its `.rar` and `.zip` ones; the list is built into PS5SX2, and at most every six hours the app asks this repository for a newer copy of it, which a file named `nohdsources` in `/data/PCSX2/flags/` stops).
 
-**Your own packs:** PS5SX2 loads PCSX2-style texture replacement packs as PNG or DDS files (DDS in BC1, BC2, BC3, BC7 or uncompressed). Switch on *Texture replacements* on the settings page. A game's pack is a folder named after its serial with a `replacements` folder inside: `<serial>/replacements/`. PS5SX2 looks for it here, in this order:
+**Your own packs:** PS5SX2 loads PCSX2-style texture replacement packs as PNG or DDS files (DDS in BC1, BC2, BC3, BC7 or uncompressed). Switch on *Texture replacements* on the settings page. A game's pack is a folder named after its serial with a `replacements` folder inside: `<serial>/replacements/`. With the *Textures folder* setting (Folders, in the settings for all games) empty, PS5SX2 looks for it here, in this order:
 
-1. The folder the *Textures folder* setting names, as `<that folder>/<serial>/`.
-2. A USB drive: `PS5SX2/textures/<serial>/`, `PCSX2/textures/<serial>/` or `textures/<serial>/`, and a pack copied to the drive's top folder as it is (`PS5SX2/<serial>/` or `<serial>/`, with its `replacements` folder).
-3. `/data/PCSX2/textures/<serial>/`, PCSX2's own place.
+1. A USB drive: `PS5SX2/textures/<serial>/`, `PCSX2/textures/<serial>/` or `textures/<serial>/`, and a pack copied to the drive's top folder as it is (`PS5SX2/<serial>/` or `<serial>/`, with its `replacements` folder).
+2. `/data/PCSX2/textures/<serial>/`, PCSX2's own place.
+
+Once the *Textures folder* names a folder, that folder is the only place: packs are read from `<that folder>/<serial>/` and downloaded packs go into it, and no USB drive is looked in. The setting is read when PS5SX2 starts.
 
 Folder names match in any case.
 
@@ -359,7 +360,7 @@ The PS5 layer lives in [`ps5/`](ps5/). [`ps5/README.md`](ps5/README.md) covers t
 - **[Mihawk-99](https://github.com/mihawk-99),** for the Vulkan driver all of PS5SX2 runs on: a modified version of ps5vk, his native Vulkan driver for the PS5's GPU from [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan), tweaked specifically for PS5SX2. PCSX2's hardware renderer, the upscaling and the 4K output all go through it. He also brings Mesa's RADV to the PS5 in [PS5_Mesa](https://github.com/mihawk-99/PS5_Mesa).
 - **BlackBearReloaded,** for ps5-native-app-boilerplate.
 - **John Törnblom,** for the ps5-payload-dev SDK.
-- **[xlenore/ps2-covers](https://github.com/xlenore/ps2-covers),** for the covers the shelf downloads.
+- **[xlenore/ps2-covers](https://github.com/xlenore/ps2-covers)** and the **[LaunchBox Games Database](https://gamesdb.launchbox-app.com),** for the covers the shelf downloads (the LaunchBox ones are box fronts, backs, spines and discs, fetched one at a time and kept on the console; the art belongs to its makers).
 - **Gabriel Fonseca ([gbfonseca](https://github.com/gbfonseca)),** for the RetroAchievements groundwork PS5SX2's achievements are built on.
 - **[RetroAchievements](https://retroachievements.org),** for the achievements and its rcheevos library.
 - **The makers of the [PCSX2 HD Texture Packs](https://archive.org/details/pcsx2-hd-texture-packs),** for the packs the shelf downloads.

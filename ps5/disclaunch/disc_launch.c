@@ -115,7 +115,7 @@
 #define EXEC_TXT    LOGS_DIR "/disc-launch-exec.txt"
 #define AUTO_TXT    LOGS_DIR "/disc-autostart.txt"
 #define EMU_ALIVE   LOGS_DIR "/ps5sx2-alive.txt"
-/* 2.10: what the shelf's question about a disc just put in was answered ("<serial> copy|play|later", written by PS5SX2's disc watcher). */
+/* 2.04: what the shelf's question about a disc just put in was answered ("<serial> copy|play|later", written by PS5SX2's disc watcher). */
 #define ASK_TXT     LOGS_DIR "/disc-ask-choice.txt"
 #define NODISCASK   "/data/PCSX2/flags/nodiscask"
 #define SELF_ALIVE  LOGS_DIR "/disc-auto-alive.txt"
@@ -439,7 +439,7 @@ static void launch_title(const char *why) {
 }
 
 static time_t g_last_start;
-static int g_ask_mode; /* 2.10: PS5SX2 was running as the disc was put in: its shelf asks (play from the disc, or copy); else it is dumped as before */
+static int g_ask_mode; /* 2.04: PS5SX2 was running as the disc was put in: its shelf asks (play from the disc, or copy); else it is dumped as before */
 static time_t g_focus_armed;   /* when; 0 = no focus watch */
 static time_t g_focus_seen;    /* exec signal consumed (or cold launch); 0 = not yet */
 
@@ -469,13 +469,13 @@ static void launch(const char *serial, const char *iso) {
     }
 }
 
-/* 2.10: PS5SX2 asks on its shelf whether to play a PS2 DVD from the disc or copy it (flag nodiscask: it copies at once, as before). */
+/* 2.04: PS5SX2 asks on its shelf whether to play a PS2 DVD from the disc or copy it (flag nodiscask: it copies at once, as before). */
 static int ask_disabled(void) {
     struct stat st;
     return stat(NODISCASK, &st) == 0;
 }
 
-/* 2.10: on the PS5 home screen (PS5SX2 not open) a PS2 DVD that is put in starts nothing by itself: the person presses its tile. The flag
+/* 2.04: on the PS5 home screen (PS5SX2 not open) a PS2 DVD that is put in starts nothing by itself: the person presses its tile. The flag
  * nodiscask brings the old self-starting behaviour back. */
 static int xmb_waits(void) {
     return !ask_disabled() && !emu_alive();
@@ -1295,7 +1295,7 @@ static int disc_auto_loop(void) {
                     usb_done = 1;
                     char uiso[1024];
                     if (xmb_waits()) {
-                        /* 2.10: the PS5 home screen: a USB disc is not copied and not started by itself either */
+                        /* 2.04: the PS5 home screen: a USB disc is not copied and not started by itself either */
                         say("usb: %s in %s, PS5SX2 is not open: nothing is copied or started", usb_serial, usb_path);
                         notify("PS2 disc in: %s. Open PS5SX2 and choose on the shelf", usb_serial);
                         uiso[0] = 0;
@@ -1327,7 +1327,7 @@ static int disc_auto_loop(void) {
                     say("%s: dump has unreadable sectors (%s): not auto-started", serial, inc);
                     notify("PS5SX2: %s was dumped with read errors; pick it from the shelf to try it", serial);
                 } else if (xmb_waits()) {
-                    /* 2.10: from the home screen the game starts when the person presses the disc's tile; the copy is used then. */
+                    /* 2.04: from the home screen the game starts when the person presses the disc's tile; the copy is used then. */
                     say("%s: a copy exists (%s), PS5SX2 is not open: waiting for the person", serial, iso);
                     notify("PS2 disc in: %s. Press its tile on the home screen to play it", serial);
                 } else {
@@ -1335,7 +1335,7 @@ static int disc_auto_loop(void) {
                 }
                 st = S_DONE;
             } else if (xmb_waits()) {
-                /* 2.10: the PS5 home screen (PS5SX2 is not open), no image of this disc: nothing is copied and nothing starts by itself. */
+                /* 2.04: the PS5 home screen (PS5SX2 is not open), no image of this disc: nothing is copied and nothing starts by itself. */
                 say("%s: no ISO in " GAMES_DIR " yet, PS5SX2 is not open: waiting for the person (the disc tile, or PS5SX2's shelf)", serial);
                 notify("PS2 disc in: %s. Press its tile on the home screen to play it", serial);
                 st = S_DONE;
@@ -1357,7 +1357,7 @@ static int disc_auto_loop(void) {
                     say("%s: no ISO in " GAMES_DIR " yet: PS5SX2 dumps it, then it starts", serial);
                     notify("PS5SX2: dumping %s, it starts when the copy is done", serial);
                 } else {
-                    /* 2.10: PS5SX2's shelf asks: play from the disc, or copy it first. Nothing is promised here. */
+                    /* 2.04: PS5SX2's shelf asks: play from the disc, or copy it first. Nothing is promised here. */
                     say("%s: no ISO in " GAMES_DIR " yet: PS5SX2 asks on its shelf whether to play it from the disc or copy it", serial);
                     notify("PS5SX2: a PS2 disc is in. Choose Play from disc or Copy on the shelf");
                 }
@@ -1377,7 +1377,7 @@ static int disc_auto_loop(void) {
                 st = S_SETTLE;
                 seen = time(NULL) - kSettleSec;
             } else {
-                /* 2.10: PS5SX2 is started again only for a copy that was chosen (or, with the question off, a dump that was meant to
+                /* 2.04: PS5SX2 is started again only for a copy that was chosen (or, with the question off, a dump that was meant to
                  * happen). A disc played from the drive, or left alone ("not now"), makes no image: closing PS5SX2 then is the person's. */
                 char ans[16];
                 const int copying = !g_ask_mode || (ask_answer(serial, ans, sizeof(ans)) && strcmp(ans, "copy") == 0);
